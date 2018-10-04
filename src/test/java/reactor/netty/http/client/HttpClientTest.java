@@ -1003,7 +1003,6 @@ public class HttpClientTest {
 				                                                     .sendHeaders()))
 				          .bindNow();
 
-		AtomicInteger i = new AtomicInteger();
 		HttpClient.create()
 		          .addressSupplier(context::address)
 		          .headersWhen(h -> Mono.just(h.set("test", "test")).delayElement(Duration.ofSeconds(2)))
@@ -1034,7 +1033,6 @@ public class HttpClientTest {
 				                                                      .sendHeaders()))
 		                                     .bindNow();
 
-		AtomicInteger i = new AtomicInteger();
 		HttpClient.create()
 		          .addressSupplier(context::address)
 		          .cookie("test", c -> c.setValue("lol"))
@@ -1158,5 +1156,55 @@ public class HttpClientTest {
 
 		server.dispose();
 		connectionProvider.dispose();
+	}
+
+	@Test
+	@Ignore
+	public void testIssue407() throws Exception {
+		SelfSignedCertificate cert = new SelfSignedCertificate();
+		DisposableServer server =
+				HttpServer.create()
+				          .port(0)
+				          .secure(spec -> spec.sslContext(
+				              SslContextBuilder.forServer(cert.certificate(), cert.privateKey())))
+				          .handle((req, res) -> res.sendString(Mono.just("test")))
+				          .wiretap()
+				          .bindNow();
+
+		HttpClient client =
+				HttpClient.create()
+				          .addressSupplier(server::address)
+				          .secure(spec -> spec.sslContext(
+				              SslContextBuilder.forClient()
+				                               .trustManager(InsecureTrustManagerFactory.INSTANCE)));
+
+		Mono<String> res =
+				client.get()
+				      .uri("/")
+				      .responseContent()
+				      .aggregate()
+				      .asString();
+
+		StepVerifier.create(res)
+				    .expectNextMatches("test"::equals)
+				    .expectComplete()
+				    .verify(Duration.ofSeconds(30));
+
+		StepVerifier.create(res)
+				    .expectNextMatches("test"::equals)
+				    .expectComplete()
+				    .verify(Duration.ofSeconds(30));
+
+		StepVerifier.create(
+				client.secure(spec -> spec.sslContext(SslContextBuilder.forClient()))
+				      .post()
+				      .uri("/test")
+				      .responseContent()
+				      .aggregate()
+				      .asString())
+				    .expectError()
+				    .verify(Duration.ofSeconds(30));
+
+		server.disposeNow();
 	}
 }
